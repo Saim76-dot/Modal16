@@ -1,0 +1,71 @@
+name: Check
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  location:
+    runs-on: warp-ubuntu-2204-x64-32x
+    timeout-minutes: 5
+    steps:
+      - name:  runner 
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Runner: ${RUNNER_NAME:-unknown}"
+          echo "OS / architecture: ${RUNNER_OS:-unknown} / ${RUNNER_ARCH:-unknown}"
+
+          aws_region=""
+          aws_zone=""
+          token="$(curl -fsS --max-time 2 -X PUT \
+            -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+            http://169.254.169.254/latest/api/token 2>/dev/null || true)"
+
+          if [[ -n "$token" ]]; then
+            identity="$(curl -fsS --max-time 2 \
+              -H "X-aws-ec2-metadata-token: $token" \
+              http://169.254.169.254/latest/dynamic/instance-identity/document \
+              2>/dev/null || true)"
+            if [[ -n "$identity" ]]; then
+              aws_region="$(jq -r '.region // empty' <<< "$identity")"
+              aws_zone="$(jq -r '.availabilityZone // empty' <<< "$identity")"
+            fi
+          fi
+
+          if [[ -n "$aws_region" ]]; then
+            echo "AWS region: $aws_region"
+            echo "AWS availability zone: ${aws_zone:-unknown}"
+          else
+            echo "AWS region: unavailable (runner metadata may be restricted)"
+          fi
+
+          geo="$(curl -fsS --max-time 8 https://ipinfo.io/json 2>/dev/null || true)"
+          if [[ -n "$geo" ]]; then
+            city="$(jq -r '.city // empty' <<< "$geo")"
+            region="$(jq -r '.region // empty' <<< "$geo")"
+            country="$(jq -r '.country // empty' <<< "$geo")"
+            echo "Public IP approximate location: ${city:+$city, }${region:+$region, }${country:-unknown}"
+          else
+            echo "Public IP approximate location: lookup unavailable"
+          fi
+
+          {
+            echo '## Depot runner location'
+            echo "- Runner: ${RUNNER_NAME:-unknown}"
+            echo "- OS / architecture: ${RUNNER_OS:-unknown} / ${RUNNER_ARCH:-unknown}"
+            if [[ -n "$aws_region" ]]; then
+              echo "- AWS region: $aws_region"
+              echo "- AWS availability zone: ${aws_zone:-unknown}"
+            else
+              echo '- AWS region: unavailable (runner metadata may be restricted)'
+            fi
+            if [[ -n "$geo" ]]; then
+              echo "- Public IP approximate location: ${city:+$city, }${region:+$region, }${country:-unknown}"
+              echo '- Note: IP geolocation shows the network exit point, not necessarily the machine location.'
+            else
+              echo '- Public IP approximate location: lookup unavailable'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
